@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Storage } from "@microsoft/agents-hosting";
+import { InProcessLock, type ConversationLock } from "./lock.js";
 
 export interface ConversationRecord {
   messages: Anthropic.Beta.BetaMessageParam[];
@@ -13,9 +14,10 @@ export interface ConversationRecord {
  * messages arriving at once in the same chat can't overwrite each other's history.
  */
 export class ConversationStore {
-  private readonly locks = new Map<string, Promise<unknown>>();
-
-  constructor(private readonly storage: Storage) {}
+  constructor(
+    private readonly storage: Storage,
+    private readonly lock: ConversationLock = new InProcessLock(),
+  ) {}
 
   /** Runs `fn` with exclusive access to the conversation's record. */
   async withConversation<T>(
@@ -23,8 +25,8 @@ export class ConversationStore {
     fn: (record: ConversationRecord) => Promise<{ record: ConversationRecord | null; result: T }>,
   ): Promise<T> {
     const key = storageKey(conversationId);
-    const previous = this.locks.get(key) ?? Promise.resolve();
-    const run = previous.catch(() => undefined).then(async () => {
+    const release = await this.lock.acquire(key);
+    try {
       const items = await this.storage.read([key]);
       const stored = items[key] as ConversationRecord | undefined;
       const record: ConversationRecord = {
@@ -35,16 +37,12 @@ export class ConversationStore {
       if (updated === null) {
         await this.storage.delete([key]);
       } else {
-        // eTag "*" = last write wins; the in-process lock already serializes turns.
+        // eTag "*" = last write wins; the lock already serializes turns.
         await this.storage.write({ [key]: { ...updated, eTag: "*" } });
       }
       return result;
-    });
-    this.locks.set(key, run);
-    try {
-      return await run;
     } finally {
-      if (this.locks.get(key) === run) this.locks.delete(key);
+      await release();
     }
   }
 }

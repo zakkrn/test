@@ -1,6 +1,8 @@
 import Anthropic, { toFile } from "@anthropic-ai/sdk";
 import { M365AttachmentDownloader, type TurnContext } from "@microsoft/agents-hosting";
+import type { Attachment } from "@microsoft/agents-activity";
 import { convert } from "officeparser";
+import { downloadSharePointFile, graphFileAccessEnabled, isSharePointUrl } from "./graph.js";
 
 type ContentBlock = Anthropic.Beta.BetaContentBlockParam;
 
@@ -44,11 +46,34 @@ export async function processAttachments(
   );
   if (attachments.length === 0) return result;
 
-  const files = await downloader.downloadFiles(context);
+  // Files shared in group chats and channels are SharePoint/OneDrive links. Those are
+  // fetched through Microsoft Graph instead, so the bot's channel token never goes to SharePoint.
+  const isShared = (a: Attachment) => a.contentType === "reference" || isSharePointUrl(a.contentUrl);
+  const direct = attachments.filter((a) => !isShared(a));
+  const files = direct.length > 0 ? await downloader.downloadFiles(withAttachments(context, direct)) : [];
 
   for (const attachment of attachments) {
-    const name = attachment.name || "vedlegg";
-    const file = files.find((f) => f.contentUrl && f.contentUrl === attachment.contentUrl);
+    let name = attachment.name || "vedlegg";
+    let file: { content: Buffer; contentType: string } | undefined;
+
+    if (isShared(attachment)) {
+      if (!graphFileAccessEnabled()) {
+        result.problems.push(`«${name}» er delt som en SharePoint-fil, og agenten har ikke tilgang til slike filer (GRAPH_FILE_ACCESS er av).`);
+        continue;
+      }
+      try {
+        const downloaded = await downloadSharePointFile(attachment.contentUrl ?? "");
+        file = downloaded;
+        name = attachment.name || downloaded.name;
+      } catch (error) {
+        console.error(`Graph download failed for ${name}:`, error);
+        result.problems.push(`Klarte ikke å hente «${name}» fra SharePoint.`);
+        continue;
+      }
+    } else {
+      file = files.find((f) => f.contentUrl && f.contentUrl === attachment.contentUrl);
+    }
+
     if (!file) {
       result.problems.push(`Klarte ikke å laste ned «${name}».`);
       continue;
@@ -81,6 +106,12 @@ export async function processAttachments(
   }
 
   return result;
+}
+
+/** A view of the turn context whose activity carries only the given attachments. */
+function withAttachments(context: TurnContext, attachments: Attachment[]): TurnContext {
+  const activity = Object.assign(Object.create(Object.getPrototypeOf(context.activity)), context.activity, { attachments });
+  return Object.create(context, { activity: { value: activity } });
 }
 
 function pushText(result: ProcessedAttachments, name: string, text: string): void {

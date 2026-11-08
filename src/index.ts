@@ -4,9 +4,12 @@ import { startServer } from "@microsoft/agents-hosting-express";
 import { processAttachments } from "./attachments.js";
 import { ClaudeAgent, client } from "./claude.js";
 import { ConversationStore } from "./history.js";
+import { InProcessLock, RedisLock } from "./lock.js";
 import { createStorage } from "./storage.js";
 
-const claude = new ClaudeAgent(new ConversationStore(createStorage()));
+// With REDIS_URL set, turns are serialized across all instances; otherwise only within this process.
+const lock = process.env.REDIS_URL ? await RedisLock.connect(process.env.REDIS_URL) : new InProcessLock();
+const claude = new ClaudeAgent(new ConversationStore(createStorage(), lock));
 
 const agent = new AgentApplication<TurnState>({
   // Framework turn state is unused (history lives in ConversationStore), so memory is enough here.
