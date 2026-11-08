@@ -1,0 +1,44 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.19",
+  "version": "1.0.0",
+  "id": "${{CLIENT_ID}}",
+  "developer": {
+    "name": "Ditt firma",
+    "websiteUrl": "https://example.com",
+    "privacyUrl": "https://example.com/privacy",
+    "termsOfUseUrl": "https://example.com/terms"
+  },
+  "name": {
+    "short": "Claude-agent",
+    "full": "Claude-agent for Teams"
+  },
+  "description": {
+    "short": "AI-assistent drevet av Claude.",
+    "full": "En AI-assistent drevet av Claude som svarer på spørsmål i personlige chatter, gruppechatter og kanaler."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#D97757",
+  "bots": [
+    {
+      "botId": "${{CLIENT_ID}}",
+      "scopes": ["personal", "groupChat", "team"],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["personal", "groupChat", "team"],
+          "commands": [
+            { "title": "/reset", "description": "Start en ny samtale" },
+            { "title": "/hjelp", "description": "Vis hjelp" }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}

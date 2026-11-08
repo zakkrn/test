@@ -1,0 +1,31 @@
+{
+  "name": "teams-claude-agent",
+  "version": "1.0.0",
+  "description": "Claude-drevet agent for Microsoft Teams",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node --env-file-if-exists=.env dist/index.js",
+    "dev": "tsc && npm start",
+    "package": "cd appPackage && zip -j teams-app.zip manifest.json color.png outline.png"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zakkrn/test.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zakkrn/test/issues"
+  },
+  "homepage": "https://github.com/zakkrn/test#readme",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
+    "@microsoft/agents-hosting": "^1.10.1",
+    "@microsoft/agents-hosting-express": "^1.10.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3"
+  },
+  "private": true,
+  "type": "module"
+}
