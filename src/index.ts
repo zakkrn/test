@@ -1,9 +1,15 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { AgentApplication, MemoryStorage, TurnContext, TurnState } from "@microsoft/agents-hosting";
 import { startServer } from "@microsoft/agents-hosting-express";
-import { askClaude, resetConversation } from "./claude.js";
+import { processAttachments } from "./attachments.js";
+import { ClaudeAgent, client } from "./claude.js";
+import { ConversationStore } from "./history.js";
+import { createStorage } from "./storage.js";
+
+const claude = new ClaudeAgent(new ConversationStore(createStorage()));
 
 const agent = new AgentApplication<TurnState>({
+  // Framework turn state is unused (history lives in ConversationStore), so memory is enough here.
   storage: new MemoryStorage(),
   // Shows "typing..." in Teams while Claude works.
   startTypingTimer: true,
@@ -18,40 +24,57 @@ agent.onConversationUpdate("membersAdded", async (context: TurnContext) => {
   for (const member of context.activity.membersAdded ?? []) {
     if (member.id !== context.activity.recipient?.id) {
       await context.sendActivity(
-        "Hei! Jeg er en AI-assistent drevet av Claude. Spør meg om hva som helst. Skriv `/reset` for å starte en ny samtale.",
+        "Hei! Jeg er en AI-assistent drevet av Claude. Spør meg om hva som helst, eller send meg bilder og filer. Skriv `/reset` for å starte en ny samtale.",
       );
     }
   }
 });
 
 agent.onMessage(/^\s*\/(reset|ny|new)\s*$/i, async (context: TurnContext) => {
-  resetConversation(conversationKey(context));
+  await claude.reset(conversationKey(context));
   await context.sendActivity("Samtalen er nullstilt. 🧹");
 });
 
 agent.onMessage(/^\s*\/(help|hjelp)\s*$/i, async (context: TurnContext) => {
   await context.sendActivity(
-    "**Kommandoer**\n- `/reset` – start en ny samtale\n- `/hjelp` – vis denne hjelpen\n\nEllers sender du bare en melding, så svarer jeg.",
+    [
+      "**Kommandoer**",
+      "- `/reset` – start en ny samtale",
+      "- `/hjelp` – vis denne hjelpen",
+      "",
+      "Ellers sender du bare en melding, så svarer jeg. Jeg kan lese bilder, PDF, Word, Excel, PowerPoint og tekstfiler.",
+    ].join("\n"),
   );
 });
 
 agent.onActivity("message", async (context: TurnContext) => {
-  const text = context.activity.text?.trim();
-  if (!text) {
-    await context.sendActivity("Jeg kan foreløpig bare lese tekstmeldinger.");
-    return;
-  }
-
-  // In group chats and channels, tell Claude who is speaking.
-  const isGroup = context.activity.conversation?.conversationType !== "personal";
-  const sender = context.activity.from?.name ?? "Ukjent";
-  const prompt = isGroup ? `[${sender}]: ${text}` : text;
+  const text = context.activity.text?.trim() ?? "";
 
   try {
-    const reply = await askClaude(conversationKey(context), prompt);
-    await context.sendActivity(reply);
+    const attachments = await processAttachments(client, context);
+
+    if (!text && attachments.blocks.length === 0) {
+      await context.sendActivity(
+        attachments.problems.length > 0 ? attachments.problems.join("\n") : "Send meg en melding eller en fil.",
+      );
+      return;
+    }
+
+    // In group chats and channels, tell Claude who is speaking.
+    const isGroup = context.activity.conversation?.conversationType !== "personal";
+    const sender = context.activity.from?.name ?? "Ukjent";
+    const message = text || "(Ingen melding, bare vedlegg.)";
+    const notes = attachments.problems.length > 0 ? `\n\n[Vedlegg som ikke kunne leses: ${attachments.problems.join(" ")}]` : "";
+
+    const reply = await claude.ask(conversationKey(context), {
+      content: [...attachments.blocks, { type: "text", text: `${isGroup ? `[${sender}]: ` : ""}${message}${notes}` }],
+      fileIds: attachments.fileIds,
+    });
+
+    const warning = attachments.problems.length > 0 ? `\n\n_${attachments.problems.join(" ")}_` : "";
+    await context.sendActivity(reply + warning);
   } catch (error) {
-    console.error("Claude request failed:", error);
+    console.error("Failed to handle message:", error);
     await context.sendActivity(friendlyError(error));
   }
 });
